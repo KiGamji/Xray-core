@@ -141,6 +141,39 @@ Scope = link
 ```
 All in all systemd-networkd and its derivatives (like netplan or NetworkManager) provide all means to configure your networking, according to your wish, that will ensure network consistency of xray0 interface coming up and down, relative to other network configuration like internet interfaces, nat rules and so on.
 
+## STACK IMPLEMENTATIONS
+
+Xray TUN supports multiple TCP/IP stack implementations:
+
+### gVisor Stack (default)
+The default stack uses Google's gVisor userspace TCP/IP implementation. It's mature and well-tested, but can have issues with certain TCP recovery mechanisms under high load.
+
+### Simple Stack (experimental, Windows only)
+An alternative lightweight TCP/IP stack written specifically for Xray proxy needs. It's simpler and has direct control over TCP state machine without complex recovery algorithms.
+
+To use the simple stack, set environment variable before running Xray:
+```
+set XRAY_TUN_STACK=simple
+xray run -c config.json
+```
+
+**Characteristics:**
+- No external TCP/IP stack dependency
+- Simple TCP state machine (SYN, ACK, FIN, RST)
+- No congestion control (relies on upstream proxy)
+- Lower memory footprint
+- Direct packet handling
+
+**Limitations:**
+- Windows only (for now)
+- No TCP retransmission (relies on application layer)
+- Experimental - use at your own risk
+
+**When to try simple stack:**
+- If gVisor stack has stability issues
+- If you need lower memory usage
+- For debugging TCP-level issues
+
 ## WINDOWS SUPPORT
 
 Windows version of the same functionality is implemented through Wintun library. \

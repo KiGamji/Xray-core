@@ -2,6 +2,8 @@ package tun
 
 import (
 	"context"
+	"os"
+	"runtime"
 
 	"github.com/xtls/xray-core/common"
 	"github.com/xtls/xray-core/common/buf"
@@ -16,6 +18,12 @@ import (
 	"github.com/xtls/xray-core/features/routing"
 	"github.com/xtls/xray-core/transport"
 	"github.com/xtls/xray-core/transport/internet/stat"
+)
+
+// Stack type constants
+const (
+	StackGVisor = "gvisor"
+	StackSimple = "simple"
 )
 
 // Handler is managing object that tie together tun interface, ip stack and dispatch connections to the routing
@@ -74,7 +82,22 @@ func (t *Handler) Init(ctx context.Context, pm policy.Manager, dispatcher routin
 		Tun:         tunInterface,
 		IdleTimeout: pm.ForLevel(t.config.UserLevel).Timeouts.ConnectionIdle,
 	}
-	tunStack, err := NewStack(t.ctx, tunStackOptions, t)
+
+	// Select stack implementation via XRAY_TUN_STACK env var
+	// Options: "gvisor" (default), "simple" (experimental, Windows only)
+	stackType := os.Getenv("XRAY_TUN_STACK")
+	if stackType == "" {
+		stackType = StackGVisor
+	}
+
+	var tunStack Stack
+	if stackType == StackSimple && runtime.GOOS == "windows" {
+		tunStack, err = NewSimpleStack(t.ctx, tunStackOptions, t)
+		errors.LogInfo(t.ctx, tunName, " using simple stack")
+	} else {
+		tunStack, err = NewStack(t.ctx, tunStackOptions, t)
+		errors.LogInfo(t.ctx, tunName, " using gVisor stack")
+	}
 	if err != nil {
 		_ = tunInterface.Close()
 		return err
