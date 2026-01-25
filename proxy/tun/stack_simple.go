@@ -97,6 +97,12 @@ type UDPHeader struct {
 	Checksum uint16
 }
 
+// outOfOrderPacket holds a packet that arrived out of order
+type outOfOrderPacket struct {
+	seq  uint32
+	data []byte
+}
+
 // TCPConnection tracks a TCP connection state
 type TCPConnection struct {
 	mu sync.Mutex
@@ -122,7 +128,8 @@ type TCPConnection struct {
 
 	// Buffers - using bytes.Buffer for better throughput
 	recvBuffer bytes.Buffer
-	recvCond   *sync.Cond // Condition variable to signal new data
+	recvCond   *sync.Cond         // Condition variable to signal new data
+	oooBuffer  []outOfOrderPacket // Out-of-order packets waiting to be processed
 
 	// Timestamps
 	LastActive time.Time
@@ -383,6 +390,9 @@ func (s *stackSimple) processTCP(srcIP, dstIP net.Address, payload []byte) {
 				conn.recvBuffer.Write(tcpData)
 				conn.LocalAck += uint32(len(tcpData))
 
+				// Check if any out-of-order packets can now be processed
+				s.processOOOBuffer(conn)
+
 				// Signal waiting readers
 				conn.recvCond.Signal()
 
@@ -391,8 +401,39 @@ func (s *stackSimple) processTCP(srcIP, dstIP net.Address, payload []byte) {
 			} else if tcpHdr.SeqNum < expectedSeq {
 				// Duplicate/old packet - just re-ACK
 				s.sendTCPAck(conn)
+			} else {
+				// Future packet - store in out-of-order buffer
+				if len(conn.oooBuffer) < 64 { // Limit buffer size
+					dataCopy := make([]byte, len(tcpData))
+					copy(dataCopy, tcpData)
+					conn.oooBuffer = append(conn.oooBuffer, outOfOrderPacket{
+						seq:  tcpHdr.SeqNum,
+						data: dataCopy,
+					})
+				}
+				// Send duplicate ACK to trigger fast retransmit
+				s.sendTCPAck(conn)
 			}
-			// Future packet (tcpHdr.SeqNum > expectedSeq) - ignore, will be retransmitted
+		}
+	}
+}
+
+// processOOOBuffer checks if any out-of-order packets can now be processed
+func (s *stackSimple) processOOOBuffer(conn *TCPConnection) {
+	changed := true
+	for changed {
+		changed = false
+		for i := 0; i < len(conn.oooBuffer); i++ {
+			pkt := conn.oooBuffer[i]
+			if pkt.seq == conn.LocalAck {
+				// This packet is now in order
+				conn.recvBuffer.Write(pkt.data)
+				conn.LocalAck += uint32(len(pkt.data))
+				// Remove from buffer
+				conn.oooBuffer = append(conn.oooBuffer[:i], conn.oooBuffer[i+1:]...)
+				changed = true
+				break
+			}
 		}
 	}
 }
