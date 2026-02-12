@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"math"
+	gonet "net"
 	"net/url"
 	"runtime"
 	"strconv"
@@ -1210,6 +1211,12 @@ func (c *SocketConfig) Build() (*internet.SocketConfig, error) {
 		happyEyeballs.Interleave = c.HappyEyeballsSettings.Interleave
 		happyEyeballs.TryDelayMs = c.HappyEyeballsSettings.TryDelayMs
 		happyEyeballs.MaxConcurrentTry = c.HappyEyeballsSettings.MaxConcurrentTry
+	}
+
+	if c.Interface != "" {
+		if _, err := gonet.InterfaceByName(c.Interface); err != nil {
+			return nil, errors.New("invalid interface: ", c.Interface).Base(err)
+		}
 	}
 
 	return &internet.SocketConfig{
